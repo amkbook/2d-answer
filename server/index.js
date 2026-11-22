@@ -415,15 +415,27 @@ app.post("/api/analyze", async (req, res) => {
     const clientRecords = Array.isArray(req.body?.checkpoints) ? req.body.checkpoints : [];
     const recordsToAnalyze = [...store.records, ...clientRecords];
 
+    const slot1221Record =
+      recordsToAnalyze.find((r) => String(r?.checkpointTime || "").includes("12:21")) ||
+      null;
+    const latestCheckpoint =
+      slot1221Record ||
+      (recordsToAnalyze.length > 0
+        ? recordsToAnalyze[recordsToAnalyze.length - 1]
+        : null);
+
     const prompt = [
       "You are a veteran Stock Exchange of Thailand (SET) market analyst.",
       "Analyze ONLY the recorded 10-minute market checkpoints chronologically (progression of SET Index, Volume '000 Shares, Value M.Baht, SET50, and market breadth).",
       `Current ICT Time: ${ict.displayStr} | Weekend (Sat/Sun): ${ict.isWeekend ? "YES" : "NO"}.`,
+      "Latest Reference Checkpoint (12:21 ICT if present, otherwise the latest recorded checkpoint):",
+      latestCheckpoint ? JSON.stringify(latestCheckpoint, null, 2) : "NONE",
       "Strict Rules:",
-      "1) SET Index may move up or down, while Volume ('000 Shares) and Value (M.Baht) must strictly increase (never decrease).",
-      "2) Output ONLY the TOP 3 highest-probability sets for the 11-minute pre-close target.",
-      "3) For EACH of the TOP 3 sets, output ONLY these 3 fields: SET Index, Volume ('000 Shares), and Value (M.Baht).",
-      "4) Do NOT include extra sets, external guesses, or long commentary.",
+      "1) Treat the Latest Reference Checkpoint (12:21 ICT if available, otherwise the latest checkpoint) as the final monitored baseline and evaluate the 10-minute progression/momentum leading into the 11-minute pre-close target.",
+      "2) SET Index may move up or down, while Volume ('000 Shares) and Value (M.Baht) must strictly increase (never decrease).",
+      "3) Output ONLY the TOP 3 highest-probability sets for the 11-minute pre-close target.",
+      "4) For EACH of the TOP 3 sets, output ONLY these 3 fields: SET Index, Volume ('000 Shares), and Value (M.Baht).",
+      "5) Do NOT include extra sets, external guesses, or long commentary.",
       "",
       "Recorded 10-Minute Checkpoints JSON:",
       JSON.stringify(recordsToAnalyze, null, 2)
@@ -464,6 +476,7 @@ app.post("/api/analyze", async (req, res) => {
     res.json({
       ok: true,
       model: result.model,
+      latestCheckpointTime: latestCheckpoint?.checkpointTime || null,
       checkpointsAnalyzed: recordsToAnalyze.length,
       analysis: result.analysis
     });
