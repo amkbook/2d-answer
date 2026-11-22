@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="my">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>SET 10-Min Checkpoint Logger & Gemini TOP 3</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --card-2: #0b1220;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --green: #22c55e;
+      --amber: #f59e0b;
+      --border: #334155;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 12px;
+      line-height: 1.5;
+    }
+    .container { max-width: 920px; margin: 0 auto; }
+    .header {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .header-top {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+    }
+    .title { font-size: 1.05rem; font-weight: 700; margin: 0; }
+    .sub { color: var(--muted); font-size: 0.82rem; }
+    .badges { display: flex; flex-wrap: wrap; gap: 6px; }
+    .badge {
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      border: 1px solid var(--border);
+      background: var(--card-2);
+    }
+    .badge.open { color: var(--green); border-color: #166534; }
+    .badge.weekend { color: var(--amber); border-color: #92400e; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+    .card h3 { margin: 0 0 10px 0; font-size: 0.95rem; color: var(--accent); }
+    .btn-group {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+    button {
+      width: 100%;
+      border: none;
+      border-radius: 10px;
+      padding: 11px 12px;
+      font-weight: 600;
+      font-size: 0.85rem;
+      cursor: pointer;
+      background: var(--accent);
+      color: #06202a;
+    }
+    button.secondary { background: #334155; color: var(--text); }
+    button.success { background: var(--green); color: #052e16; }
+    .out-box {
+      background: var(--card-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      margin-top: 10px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 0.84rem;
+    }
+    .notice {
+      background: rgba(245, 158, 11, 0.12);
+      border: 1px solid rgba(245, 158, 11, 0.45);
+      color: #fde68a;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 0.84rem;
+      margin-bottom: 12px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="header-top">
+        <h1 class="title">SET 10-Min Checkpoint Logger → Gemini TOP 3</h1>
+        <div class="badges">
+          <span id="ictClock" class="badge">ICT: --:--:--</span>
+          <span id="statusBadge" class="badge">Checking...</span>
+        </div>
+      </div>
+      <div class="sub">Auto 10m ICT Schedule: 11:31, 11:41, 11:51, 12:01, 12:11, 12:21 → TOP 3 Sets (SET Index, Volume, Value)</div>
+    </div>
+
+    <div id="weekendNotice" class="notice">
+      စနေ / တနင်္ဂနွေ ပိတ်ရက် ဖြစ်သောကြောင့် အလိုအလျောက် ဆွဲယူမှု နားထားပါသည်။
+    </div>
+
+    <div class="card">
+      <h3>1. ၁၀ မိနစ်ခြား စုစည်းမှတ်တမ်းစာရင်း (Recorded Checkpoints)</h3>
+      <div class="btn-group">
+        <button id="btnFetchNow">Fetch SET Now & Save</button>
+        <button id="btnRefreshLogs" class="secondary">Refresh Logs</button>
+        <button id="btnClearLogs" class="secondary">Clear Logs</button>
+      </div>
+      <div id="checkpointBox" class="out-box" style="font-family:monospace; font-size:0.79rem;">Loading checkpoints...</div>
+    </div>
+
+    <div class="card">
+      <h3>2. Gemini API TOP 3 ရလဒ် (SET Index, Volume '000 Shares, Value M.Baht)</h3>
+      <div class="btn-group">
+        <button id="btnAnalyzeTop3" class="success">Analyze Checkpoints → Get TOP 3 Sets</button>
+      </div>
+      <div id="analyzeStatus" class="out-box">Status: Ready</div>
+      <div id="analyzeResult" class="out-box">Gemini TOP 3 အဖြေ ဤနေရာတွင် ပေါ်ပါမည်။</div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = window.location.origin;
+
+    function updateClock() {
+      const now = new Date();
+      const parts = new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Asia/Bangkok",
+        weekday: "short",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false
+      }).formatToParts(now);
+
+      const map = {};
+      for (const p of parts) map[p.type] = p.value;
+
+      const isWeekend = map.weekday === "Sat" || map.weekday === "Sun";
+      const displayStr = `${map.weekday} ${map.day}/${map.month}/${map.year} ${map.hour}:${map.minute}:${map.second} ICT`;
+
+      document.getElementById("ictClock").textContent = displayStr;
+      document.getElementById("weekendNotice").style.display = isWeekend ? "block" : "none";
+
+      const badge = document.getElementById("statusBadge");
+      if (isWeekend) {
+        badge.textContent = "Weekend Off";
+        badge.className = "badge weekend";
+      } else {
+        badge.textContent = "ICT Active";
+        badge.className = "badge open";
+      }
+    }
+
+    function renderRecords(records = []) {
+      const box = document.getElementById("checkpointBox");
+      if (!Array.isArray(records) || records.length === 0) {
+        box.textContent = "No checkpoints recorded yet.";
+        return;
+      }
+
+      box.textContent = records
+        .map((r, i) => {
+          return `${i + 1}. [${r.dateKey || "-"} | ${r.checkpointTime || "-"}] SET=${r.setIndex ?? "-"} | Vol=${r.volumeKShares ?? "-"} | Val=${r.valueMBaht ?? "-"} | SET50=${r.set50Index ?? "-"}`;
+        })
+        .join("\n");
+    }
+
+    async function loadCheckpoints() {
+      try {
+        const res = await fetch(`${API_BASE}/api/checkpoints`, { cache: "no-store" });
+        const data = await res.json();
+        if (data.ok) {
+          renderRecords(data.records || []);
+        }
+      } catch (err) {
+        document.getElementById("checkpointBox").textContent = "Error loading checkpoints: " + err.message;
+      }
+    }
+
+    document.getElementById("btnFetchNow").addEventListener("click", async () => {
+      const box = document.getElementById("checkpointBox");
+      box.textContent = "Fetching live data from SET website...";
+      try {
+        const res = await fetch(`${API_BASE}/api/checkpoints/fetch-now`, { method: "POST" });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          box.textContent = "Fetch failed: " + (data.error || "Unknown error");
+          return;
+        }
+        renderRecords(data.records || []);
+      } catch (err) {
+        box.textContent = "Network error: " + err.message;
+      }
+    });
+
+    document.getElementById("btnRefreshLogs").addEventListener("click", loadCheckpoints);
+
+    document.getElementById("btnClearLogs").addEventListener("click", async () => {
+      await fetch(`${API_BASE}/api/checkpoints`, { method: "DELETE" });
+      renderRecords([]);
+    });
+
+    document.getElementById("btnAnalyzeTop3").addEventListener("click", async () => {
+      const statusEl = document.getElementById("analyzeStatus");
+      const resultEl = document.getElementById("analyzeResult");
+      statusEl.textContent = "Status: Analyzing recorded 10-minute checkpoints with Gemini API...";
+      resultEl.textContent = "ခဏစောင့်ပါ — မှတ်တမ်းများကို နှိုင်းယှဉ်သုံးသပ်နေပါသည်...";
+
+      try {
+        const res = await fetch(`${API_BASE}/api/analyze`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({})
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          statusEl.textContent = "Status: Error";
+          resultEl.textContent = data.error || "Analysis failed.";
+          return;
+        }
+        statusEl.textContent = `Status: Completed (${data.model}) | Checkpoints Analyzed: ${data.checkpointsAnalyzed}`;
+        resultEl.textContent = data.analysis || "No response text.";
+      } catch (err) {
+        statusEl.textContent = "Status: Network Error";
+        resultEl.textContent = err.message || "Request failed.";
+      }
+    });
+
+    updateClock();
+    setInterval(updateClock, 1000);
+    loadCheckpoints();
+    setInterval(loadCheckpoints, 60 * 1000);
+  </script>
+</body>
+</html>
