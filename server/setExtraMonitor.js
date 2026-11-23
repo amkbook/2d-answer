@@ -36,19 +36,17 @@ async function fetchSetOverviewDetails() {
   const bodyText = stripHtmlToText(html);
 
   const setMatch = bodyText.match(
-    /\bSET\s+([-\d,.]+)\s+([+-]?[\d,.]+)\s*\(([+-]?[\d,.]+%)\)\s+([\d,.]+)\s+([\d,.]+)/
+    /\bSET\b\s+(-?\d[\d,]*\.\d{2})\s+([+-]?\d[\d,]*\.\d{2})\s*\(([^)]+)\)/
   );
   const set50Match = bodyText.match(
-    /\bSET50\b\s+([-\d,.]+)\s+([+-]?[\d,.]+)\s*\(([+-]?[\d,.]+%)\)\s+([\d,.]+)\s+([\d,.]+)/
+    /\bSET50\b\s+(-?\d[\d,]*\.\d{2})\s+([+-]?\d[\d,]*\.\d{2})\s*\(([^)]+)\)/
   );
-  const highLowMatch = bodyText.match(/High\s+([\d,.]+)\s+Low\s+([\d,.]+)/i);
+  const highLowMatch = bodyText.match(/\bHigh\s+([\d,]+\.\d{2})\s+Low\s+([\d,]+\.\d{2})/i);
 
   return {
     setIndex: setMatch ? cleanNum(setMatch[1]) : null,
     setChange: setMatch ? setMatch[2] : null,
     setChangePct: setMatch ? setMatch[3] : null,
-    volume: setMatch ? cleanNum(setMatch[4]) : null,
-    value: setMatch ? cleanNum(setMatch[5]) : null,
     set50Index: set50Match ? cleanNum(set50Match[1]) : null,
     high: highLowMatch ? cleanNum(highLowMatch[1]) : null,
     low: highLowMatch ? cleanNum(highLowMatch[2]) : null
@@ -78,12 +76,12 @@ async function fetchFlowAndTop5() {
   }
 
   const top5 = [];
-  const top5SectionMatch = text.match(/Top\s*5[\s\S]{0,1500}/i);
+  const top5SectionMatch = text.match(/Top\s*5[\s\S]{0,2500}/i);
   if (top5SectionMatch) {
     const chunk = top5SectionMatch[0];
     const symMatches = [
       ...chunk.matchAll(
-        /\b([A-Z0-9]{2,10})\b\s+([\d,.]+)\s+([+-]?[\d,.]+)\s*\(([+-]?[\d,.]+%)\)/g
+        /\b([A-Z0-9]{2,10})\b\s+([\d,]+\.\d{2})\s+([+-]?[\d,]+\.\d{2})\s*\(([+-]?[\d,.]+%)\)/g
       )
     ];
     for (const item of symMatches.slice(0, 5)) {
@@ -126,9 +124,7 @@ async function collectEnrichedCheckpoint(ictTimeLabel) {
       overview.setChangePct ?? "N/A"
     })`,
     `High/Low: ${overview.high ?? "N/A"}/${overview.low ?? "N/A"}`,
-    `Vol: ${overview.volume ?? "N/A"} | Val: ${overview.value ?? "N/A"} | SET50: ${
-      overview.set50Index ?? "N/A"
-    }`,
+    `SET50: ${overview.set50Index ?? "N/A"}`,
     `Net Flow (M.Baht): ${flowSummary}`,
     `Top 5 Value: ${top5Summary}`
   ].join(" | ");
