@@ -1,11 +1,8 @@
-const axios = require("axios");
-const cheerio = require("cheerio");
-
 const HEADERS = {
   "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
   Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-  "Accept-Language": "en-US,en;q=0.9"
+  "Accept-Language": "en-US,en;q=0.9,th;q=0.8"
 };
 
 function cleanNum(text) {
@@ -14,17 +11,35 @@ function cleanNum(text) {
   return Number.isFinite(n) ? n : null;
 }
 
+function stripHtmlToText(html = "") {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function fetchHtml(url) {
+  const res = await fetch(url, { headers: HEADERS });
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} from ${url}`);
+  }
+  return await res.text();
+}
+
 async function fetchSetOverviewDetails() {
   const url = "https://www.set.or.th/en/market/product/stock/overview";
-  const { data: html } = await axios.get(url, { headers: HEADERS, timeout: 15000 });
-  const $ = cheerio.load(html);
-  const bodyText = $("body").text().replace(/\s+/g, " ");
+  const html = await fetchHtml(url);
+  const bodyText = stripHtmlToText(html);
 
   const setMatch = bodyText.match(
     /\bSET\s+([-\d,.]+)\s+([+-]?[\d,.]+)\s*\(([+-]?[\d,.]+%)\)\s+([\d,.]+)\s+([\d,.]+)/
   );
   const set50Match = bodyText.match(
-    /\bSET50\s+([-\d,.]+)\s+([+-]?[\d,.]+)\s*\(([+-]?[\d,.]+%)\)\s+([\d,.]+)\s+([\d,.]+)/
+    /\bSET50\b\s+([-\d,.]+)\s+([+-]?[\d,.]+)\s*\(([+-]?[\d,.]+%)\)\s+([\d,.]+)\s+([\d,.]+)/
   );
   const highLowMatch = bodyText.match(/High\s+([\d,.]+)\s+Low\s+([\d,.]+)/i);
 
@@ -42,9 +57,8 @@ async function fetchSetOverviewDetails() {
 
 async function fetchFlowAndTop5() {
   const url = "https://www.set.or.th/en/home";
-  const { data: html } = await axios.get(url, { headers: HEADERS, timeout: 15000 });
-  const $ = cheerio.load(html);
-  const text = $("body").text().replace(/\s+/g, " ");
+  const html = await fetchHtml(url);
+  const text = stripHtmlToText(html);
 
   const investorTypes = ["Institution", "Proprietary", "Foreign", "Individual"];
   const netFlow = {};
