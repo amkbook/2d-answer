@@ -28,6 +28,21 @@ app.use(express.static(path.join(__dirname, "..", "public")));
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+let extraMonitorCache = null;
+async function getExtraMonitor() {
+  if (extraMonitorCache) return extraMonitorCache;
+  try {
+    const mod = await import("./setExtraMonitor.js");
+    if (typeof mod?.collectEnrichedCheckpoint === "function") {
+      extraMonitorCache = mod;
+      return extraMonitorCache;
+    }
+  } catch (err) {
+    console.warn(`[ExtraMonitor Load Warning] ${err.message}`);
+  }
+  return null;
+}
+
 function ensureStore() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -159,6 +174,18 @@ async function fetchSetSnapshot() {
   };
 }
 
+async function enrichWithExtraMonitor(checkpointTime) {
+  const mod = await getExtraMonitor();
+  if (!mod) return null;
+  const cleanLabel = String(checkpointTime || "").replace(/\s*ICT$/i, "").trim();
+  try {
+    return await mod.collectEnrichedCheckpoint(cleanLabel);
+  } catch (err) {
+    console.warn(`[ExtraMonitor Collect Warning] ${cleanLabel}: ${err.message}`);
+    return null;
+  }
+}
+
 function saveCheckpointRecord(raw) {
   const store = readStore();
   const ict = getIctNow();
@@ -194,7 +221,9 @@ function saveCheckpointRecord(raw) {
     set50Index: parseNumber(raw.set50Index),
     advancers: parseNumber(raw.advancers),
     decliners: parseNumber(raw.decliners),
-    lastUpdate: raw.lastUpdate || null
+    lastUpdate: raw.lastUpdate || null,
+    extra: raw.extra || null,
+    promptLine: raw.promptLine || null
   };
 
   const idx = store.records.findIndex(
@@ -225,7 +254,11 @@ async function run10MinAutoMonitor() {
   if (!TARGET_SLOTS.includes(ict.hmKey)) return;
 
   try {
-    const snap = await fetchSetSnapshot();
+    const [snap, enriched] = await Promise.all([
+      fetchSetSnapshot(),
+      enrichWithExtraMonitor(ict.hmKey)
+    ]);
+
     if (
       snap.setIndex !== null &&
       snap.volumeKShares !== null &&
@@ -236,11 +269,22 @@ async function run10MinAutoMonitor() {
         checkpointTime: `${ict.hmKey} ICT`,
         ictTimestamp: ict.displayStr,
         source: "auto-10min-set",
-        ...snap
+        ...snap,
+        extra: enriched
+          ? {
+              overview: enriched.overview || null,
+              netFlow: enriched.netFlow || null,
+              top5: enriched.top5 || []
+            }
+          : null,
+        promptLine: enriched?.promptLine || null
       });
       console.log(
         `[Auto 10m Checkpoint] ${ict.dateKey} ${ict.hmKey} ICT -> SET ${snap.setIndex}, Vol ${snap.volumeKShares}, Val ${snap.valueMBaht}`
       );
+      if (enriched?.promptLine) {
+        console.log(`[Enriched Line] ${enriched.promptLine}`);
+      }
     }
   } catch (err) {
     console.warn(`[Auto 10m Fetch Warning] ${ict.displayStr}: ${err.message}`);
@@ -363,13 +407,25 @@ app.get("/api/checkpoints", (req, res) => {
 app.post("/api/checkpoints/fetch-now", async (req, res) => {
   try {
     const ict = getIctNow();
-    const snap = await fetchSetSnapshot();
+    const [snap, enriched] = await Promise.all([
+      fetchSetSnapshot(),
+      enrichWithExtraMonitor(ict.hmKey)
+    ]);
+
     const { record, store } = saveCheckpointRecord({
       dateKey: ict.dateKey,
       checkpointTime: `${ict.hmKey} ICT`,
       ictTimestamp: ict.displayStr,
       source: "manual-fetch",
-      ...snap
+      ...snap,
+      extra: enriched
+        ? {
+            overview: enriched.overview || null,
+            netFlow: enriched.netFlow || null,
+            top5: enriched.top5 || []
+          }
+        : null,
+      promptLine: enriched?.promptLine || null
     });
     res.json({ ok: true, record, totalRecords: store.records.length, records: store.records });
   } catch (err) {
@@ -424,12 +480,18 @@ app.post("/api/analyze", async (req, res) => {
         ? recordsToAnalyze[recordsToAnalyze.length - 1]
         : null);
 
+    const enrichedLines = recordsToAnalyze
+      .map((r) => r?.promptLine)
+      .filter(Boolean);
+
     const prompt = [
       "You are a veteran Stock Exchange of Thailand (SET) market analyst.",
-      "Analyze ONLY the recorded 10-minute market checkpoints chronologically (progression of SET Index, Volume '000 Shares, Value M.Baht, SET50, and market breadth).",
+      "Analyze ONLY the recorded 10-minute market checkpoints chronologically (progression of SET Index, Volume '000 Shares, Value M.Baht, SET50, High/Low, Investor Net Flow, Top 5 Value stocks, and market breadth).",
       `Current ICT Time: ${ict.displayStr} | Weekend (Sat/Sun): ${ict.isWeekend ? "YES" : "NO"}.`,
       "Latest Reference Checkpoint (12:21 ICT if present, otherwise the latest recorded checkpoint):",
       latestCheckpoint ? JSON.stringify(latestCheckpoint, null, 2) : "NONE",
+      enrichedLines.length > 0 ? "Enriched Checkpoint Lines:" : "",
+      ...enrichedLines,
       "Strict Rules:",
       "1) Treat the Latest Reference Checkpoint (12:21 ICT if available, otherwise the latest checkpoint) as the final monitored baseline and evaluate the 10-minute progression/momentum leading into the 11-minute pre-close target.",
       "2) SET Index may move up or down, while Volume ('000 Shares) and Value (M.Baht) must strictly increase (never decrease).",
@@ -439,7 +501,9 @@ app.post("/api/analyze", async (req, res) => {
       "",
       "Recorded 10-Minute Checkpoints JSON:",
       JSON.stringify(recordsToAnalyze, null, 2)
-    ].join("\n");
+    ]
+      .filter(Boolean)
+      .join("\n");
 
     const primaryModel = (process.env.GEMINI_MODEL || "gemini-3.8-flash").trim();
     const fallbackModel = (process.env.GEMINI_FALLBACK_MODEL || "").trim();

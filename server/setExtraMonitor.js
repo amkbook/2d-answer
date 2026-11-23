@@ -1,0 +1,131 @@
+import axios from "axios";
+import * as cheerio from "cheerio";
+
+const HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
+};
+
+function cleanNum(text) {
+  if (!text) return null;
+  const n = parseFloat(String(text).replace(/,/g, "").replace(/[^\d.-]/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * 1) SET / SET50 / High / Low / Change ကို overview စာမျက်နှာမှ ဖတ်ယူခြင်း
+ */
+export async function fetchSetOverviewDetails() {
+  const url = "https://www.set.or.th/en/market/product/stock/overview";
+  const { data: html } = await axios.get(url, { headers: HEADERS, timeout: 15000 });
+  const $ = cheerio.load(html);
+  const bodyText = $("body").text().replace(/\s+/g, " ");
+
+  const setMatch = bodyText.match(
+    /\bSET\s+([-\d,.]+)\s+([+-]?[\d,.]+)\s*\(([+-]?[\d,.]+%)\)\s+([\d,.]+)\s+([\d,.]+)/
+  );
+  const set50Match = bodyText.match(
+    /\bSET50\s+([-\d,.]+)\s+([+-]?[\d,.]+)\s*\(([+-]?[\d,.]+%)\)\s+([\d,.]+)\s+([\d,.]+)/
+  );
+  const highLowMatch = bodyText.match(/High\s+([\d,.]+)\s+Low\s+([\d,.]+)/i);
+
+  return {
+    setIndex: setMatch ? cleanNum(setMatch[1]) : null,
+    setChange: setMatch ? setMatch[2] : null,
+    setChangePct: setMatch ? setMatch[3] : null,
+    volume: setMatch ? cleanNum(setMatch[4]) : null,
+    value: setMatch ? cleanNum(setMatch[5]) : null,
+    set50Index: set50Match ? cleanNum(set50Match[1]) : null,
+    high: highLowMatch ? cleanNum(highLowMatch[1]) : null,
+    low: highLowMatch ? cleanNum(highLowMatch[2]) : null,
+  };
+}
+
+/**
+ * 2) Investor Type Net Flow (Institution, Proprietary, Foreign, Individual)
+ * 3) Top 5 by Value ရှယ်ယာများ
+ * ကို SET home / trading summary စာမျက်နှာမှ ဖတ်ယူခြင်း
+ */
+export async function fetchFlowAndTop5() {
+  const url = "https://www.set.or.th/en/home";
+  const { data: html } = await axios.get(url, { headers: HEADERS, timeout: 15000 });
+  const $ = cheerio.load(html);
+  const text = $("body").text().replace(/\s+/g, " ");
+
+  const investorTypes = ["Institution", "Proprietary", "Foreign", "Individual"];
+  const netFlow = {};
+
+  for (const type of investorTypes) {
+    // ဥပမာ: Foreign 25,978.32 28,344.53 -2,366.20
+    const re = new RegExp(
+      `\\b${type}\\b\\s+([+-]?[\\d,.]+)\\s+([+-]?[\\d,.]+)\\s+([+-]?[\\d,.]+)`
+    );
+    const m = text.match(re);
+    netFlow[type] = m
+      ? {
+          buy: cleanNum(m[1]),
+          sell: cleanNum(m[2]),
+          net: cleanNum(m[3]),
+        }
+      : { buy: null, sell: null, net: null };
+  }
+
+  // Top 5 Value ထဲက ရှယ်ယာ symbol နဲ့ % အတက်အကျကို ဖတ်ယူခြင်း
+  const top5 = [];
+  const top5SectionMatch = text.match(/Top\s*5[\s\S]{0,1500}/i);
+  if (top5SectionMatch) {
+    const chunk = top5SectionMatch[0];
+    const symMatches = [...chunk.matchAll(/\b([A-Z0-9]{2,10})\b\s+([\d,.]+)\s+([+-]?[\d,.]+)\s*\(([+-]?[\d,.]+%)\)/g)];
+    for (const item of symMatches.slice(0, 5)) {
+      const pct = parseFloat(item[4].replace("%", ""));
+      const dir = pct > 0 ? "▲" : pct < 0 ? "▼" : "▬";
+      top5.push({
+        symbol: item[1],
+        price: cleanNum(item[2]),
+        changePct: item[4],
+        dir,
+      });
+    }
+  }
+
+  return { netFlow, top5 };
+}
+
+/**
+ * 10 မိနစ်ခြား မှတ်တမ်းအပြည့်အစုံ စုစည်းခြင်း
+ */
+export async function collectEnrichedCheckpoint(ictTimeLabel) {
+  const [overviewRes, flowRes] = await Promise.allSettled([
+    fetchSetOverviewDetails(),
+    fetchFlowAndTop5(),
+  ]);
+
+  const overview = overviewRes.status === "fulfilled" ? overviewRes.value : {};
+  const { netFlow = {}, top5 = [] } = flowRes.status === "fulfilled" ? flowRes.value : {};
+
+  const fmtNet = (val) => (val === null || val === undefined ? "N/A" : `${val > 0 ? "+" : ""}${val}`);
+  const flowSummary = `Inst ${fmtNet(netFlow.Institution?.net)} | Prop ${fmtNet(netFlow.Proprietary?.net)} | Foreign ${fmtNet(netFlow.Foreign?.net)} | Indiv ${fmtNet(netFlow.Individual?.net)}`;
+  const top5Summary =
+    top5.length > 0
+      ? top5.map((s) => `${s.symbol} ${s.dir} (${s.changePct})`).join(" | ")
+      : "N/A";
+
+  const promptLine = [
+    `[${ictTimeLabel} ICT]`,
+    `SET: ${overview.setIndex ?? "N/A"} (${overview.setChange ?? "N/A"}, ${overview.setChangePct ?? "N/A"})`,
+    `High/Low: ${overview.high ?? "N/A"}/${overview.low ?? "N/A"}`,
+    `Vol: ${overview.volume ?? "N/A"} | Val: ${overview.value ?? "N/A"} | SET50: ${overview.set50Index ?? "N/A"}`,
+    `Net Flow (M.Baht): ${flowSummary}`,
+    `Top 5 Value: ${top5Summary}`,
+  ].join(" | ");
+
+  return {
+    time: ictTimeLabel,
+    overview,
+    netFlow,
+    top5,
+    promptLine,
+  };
+}
