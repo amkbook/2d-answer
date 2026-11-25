@@ -179,6 +179,31 @@
       }
     }
 
+    function formatNetVal(v) {
+      if (v === null || v === undefined) return "N/A";
+      return `${Number(v) > 0 ? "+" : ""}${v}`;
+    }
+
+    function formatEnrichedDetails(r) {
+      const extra = r.extra || {};
+      const ov = extra.overview || {};
+      const nf = extra.netFlow || {};
+      const top5 = Array.isArray(extra.top5) ? extra.top5 : [];
+
+      const hlStr = `H/L=${ov.high ?? "N/A"}/${ov.low ?? "N/A"}`;
+      const flowStr = `Flow: Inst ${formatNetVal(nf.Institution?.net)}, Prop ${formatNetVal(
+        nf.Proprietary?.net
+      )}, Foreign ${formatNetVal(nf.Foreign?.net)}, Indiv ${formatNetVal(nf.Individual?.net)}`;
+      const top5Str =
+        top5.length > 0
+          ? `Top5: ${top5
+              .map((s) => `${s.symbol} ${s.price ?? ""} ${s.dir || ""} (${s.changePct || ""})`.trim())
+              .join(", ")}`
+          : "Top5: N/A";
+
+      return `   ${hlStr} | ${flowStr}\n   ${top5Str}`;
+    }
+
     function renderRecords(records = []) {
       const box = document.getElementById("checkpointBox");
       if (!Array.isArray(records) || records.length === 0) {
@@ -188,9 +213,14 @@
 
       box.textContent = records
         .map((r, i) => {
-          return `${i + 1}. [${r.dateKey || "-"} | ${r.checkpointTime || "-"}] SET=${r.setIndex ?? "-"} | Vol=${r.volumeKShares ?? "-"} | Val=${r.valueMBaht ?? "-"} | SET50=${r.set50Index ?? "-"}`;
+          const base = `${i + 1}. [${r.dateKey || "-"} | ${r.checkpointTime || "-"}] SET=${
+            r.setIndex ?? "-"
+          } | Vol=${r.volumeKShares ?? "-"} | Val=${r.valueMBaht ?? "-"} | SET50=${
+            r.set50Index ?? "-"
+          }`;
+          return `${base}\n${formatEnrichedDetails(r)}`;
         })
-        .join("\n");
+        .join("\n\n");
     }
 
     async function loadCheckpoints() {

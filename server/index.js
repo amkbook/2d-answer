@@ -3,6 +3,8 @@ const path = require("path");
 const fs = require("fs");
 require("dotenv").config();
 
+const extraMonitor = require("./setExtraMonitor.js");
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -27,21 +29,6 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname, "..", "public")));
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-let extraMonitorCache = null;
-async function getExtraMonitor() {
-  if (extraMonitorCache) return extraMonitorCache;
-  try {
-    const mod = await import("./setExtraMonitor.js");
-    if (typeof mod?.collectEnrichedCheckpoint === "function") {
-      extraMonitorCache = mod;
-      return extraMonitorCache;
-    }
-  } catch (err) {
-    console.warn(`[ExtraMonitor Load Warning] ${err.message}`);
-  }
-  return null;
-}
 
 function ensureStore() {
   if (!fs.existsSync(DATA_DIR)) {
@@ -175,11 +162,12 @@ async function fetchSetSnapshot() {
 }
 
 async function enrichWithExtraMonitor(checkpointTime) {
-  const mod = await getExtraMonitor();
-  if (!mod) return null;
+  if (typeof extraMonitor?.collectEnrichedCheckpoint !== "function") {
+    return null;
+  }
   const cleanLabel = String(checkpointTime || "").replace(/\s*ICT$/i, "").trim();
   try {
-    return await mod.collectEnrichedCheckpoint(cleanLabel);
+    return await extraMonitor.collectEnrichedCheckpoint(cleanLabel);
   } catch (err) {
     console.warn(`[ExtraMonitor Collect Warning] ${cleanLabel}: ${err.message}`);
     return null;
@@ -193,7 +181,6 @@ function saveCheckpointRecord(raw) {
   const dateKey = raw.dateKey || ict.dateKey;
   const checkpointTime = raw.checkpointTime || raw.time || `${ict.hmKey} ICT`;
 
-  // Enforce strictly non-decreasing Volume & Value against prior records on the same date
   const sameDayPrior = store.records.filter(
     (r) => r.dateKey === dateKey && r.checkpointTime !== checkpointTime
   );
