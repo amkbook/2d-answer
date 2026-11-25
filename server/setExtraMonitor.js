@@ -35,14 +35,13 @@ async function fetchHtml(url) {
 }
 
 function parseHighLowFromText(text) {
-  // Pattern 1: "High 1,457.78 Low 1,444.50"
-  const m1 = text.match(/\bHigh\b[^\d-]*([\d,]+\.\d{2})[\s\S]{0,80}?\bLow\b[^\d-]*([\d,]+\.\d{2})/i);
+  const m1 = text.match(
+    /\bHigh\b[^\d-]*([\d,]+\.\d{2})[\s\S]{0,80}?\bLow\b[^\d-]*([\d,]+\.\d{2})/i
+  );
   if (m1) {
     return { high: cleanNum(m1[1]), low: cleanNum(m1[2]) };
   }
 
-  // Pattern 2: SET table row with Open, High, Low, Prior/Vol/Val
-  // e.g. SET 1,457.54 +4.26 (+0.29%) <open> <high> <low> ...
   const setRowMatch = text.match(
     /\bSET\b\s+(-?\d[\d,]*\.\d{2})\s+([+-]?\d[\d,]*\.\d{2})\s*\(([^)]+)\)\s+(-?\d[\d,]*\.\d{2})\s+(-?\d[\d,]*\.\d{2})\s+(-?\d[\d,]*\.\d{2})/
   );
@@ -127,9 +126,8 @@ function parseTop5FromSection(sectionText) {
     "OCT"
   ]);
 
-  // Match symbol followed by price, change, and (% change) anywhere within a nearby window
   const regex =
-    /\b([A-Z][A-Z0-9]{1,9})\b[\s\S]{0,60}?([\d,]+\.\d{2})\s+([+-]?[\d,]+\.\d{2})\s*\(\s*([+-]?[\d,.]+%)\s*\)/g;
+    /\b([A-Z][A-Z0-9]{1,9})\b[\s\S]{0,80}?([\d,]+\.\d{2})\s+([+-]?[\d,]+\.\d{2})\s*\(\s*([+-]?[\d,.]+%)\s*\)/g;
 
   const seen = new Set();
   for (const m of sectionText.matchAll(regex)) {
@@ -154,7 +152,6 @@ function parseTop5FromSection(sectionText) {
     if (top5.length >= 5) break;
   }
 
-  // Fallback line-by-line scan if multi-line chunk didn't match cleanly
   if (top5.length === 0) {
     for (let i = 0; i < lines.length; i++) {
       const symCandidate = lines[i].replace(/[^A-Za-z0-9]/g, "").toUpperCase();
@@ -163,7 +160,7 @@ function parseTop5FromSection(sectionText) {
         !ignoreSymbols.has(symCandidate) &&
         !seen.has(symCandidate)
       ) {
-        const windowStr = lines.slice(i, i + 5).join(" ");
+        const windowStr = lines.slice(i, i + 6).join(" ");
         const wm = windowStr.match(
           /([\d,]+\.\d{2})\s+([+-]?[\d,]+\.\d{2})\s*\(\s*([+-]?[\d,.]+%)\s*\)/
         );
@@ -187,10 +184,53 @@ function parseTop5FromSection(sectionText) {
   return top5;
 }
 
-async function fetchFlowAndTop5() {
-  const url = "https://www.set.or.th/en/home";
-  const html = await fetchHtml(url);
+function extractTop5FromHtml(html = "") {
+  // Check embedded JSON / script objects first
+  const jsonTop5 = [];
+  const objMatches = [
+    ...html.matchAll(
+      /"(?:symbol|securitySymbol|stockSymbol)"\s*:\s*"([A-Z][A-Z0-9]{1,9})"[\s\S]{0,180}?"(?:last|lastPrice|price)"\s*:\s*([\d.]+)[\s\S]{0,180}?"(?:percentChange|changePercent|pctChange)"\s*:\s*([+-]?[\d.]+)/gi
+    )
+  ];
+
+  const seen = new Set();
+  for (const m of objMatches) {
+    const symbol = String(m[1]).toUpperCase();
+    if (seen.has(symbol)) continue;
+    const price = cleanNum(m[2]);
+    const pctNum = parseFloat(m[3]);
+    if (price === null || !Number.isFinite(pctNum)) continue;
+    seen.add(symbol);
+    const pctStr = `${pctNum > 0 ? "+" : ""}${pctNum.toFixed(2)}%`;
+    const dir = pctNum > 0 ? "▲" : pctNum < 0 ? "▼" : "▬";
+    jsonTop5.push({
+      symbol,
+      price,
+      changePct: pctStr,
+      dir
+    });
+    if (jsonTop5.length >= 5) return jsonTop5;
+  }
+
   const text = stripHtmlToText(html);
+  const top5Idx = text.search(/Top\s*5/i);
+  const slice = top5Idx >= 0 ? text.slice(top5Idx, top5Idx + 4000) : text;
+  return parseTop5FromSection(slice);
+}
+
+async function fetchFlowAndTop5() {
+  const homeUrl = "https://www.set.or.th/en/home";
+  const overviewUrl = "https://www.set.or.th/en/market/product/stock/overview";
+
+  const [homeRes, overviewRes] = await Promise.allSettled([
+    fetchHtml(homeUrl),
+    fetchHtml(overviewUrl)
+  ]);
+
+  const homeHtml = homeRes.status === "fulfilled" ? homeRes.value : "";
+  const overviewHtml = overviewRes.status === "fulfilled" ? overviewRes.value : "";
+
+  const text = stripHtmlToText(homeHtml || overviewHtml);
   const singleLine = text.replace(/\s+/g, " ");
 
   const investorTypes = ["Institution", "Proprietary", "Foreign", "Individual"];
@@ -210,9 +250,10 @@ async function fetchFlowAndTop5() {
       : { buy: null, sell: null, net: null };
   }
 
-  const top5Idx = text.search(/Top\s*5/i);
-  const top5Slice = top5Idx >= 0 ? text.slice(top5Idx, top5Idx + 3500) : text;
-  const top5 = parseTop5FromSection(top5Slice);
+  let top5 = extractTop5FromHtml(homeHtml);
+  if (top5.length === 0 && overviewHtml) {
+    top5 = extractTop5FromHtml(overviewHtml);
+  }
 
   return { netFlow, top5 };
 }
