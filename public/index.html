@@ -204,6 +204,7 @@
       return `   ${hlStr} | ${flowStr}\n   ${top5Str}`;
     }
 
+    // Updated: displays full details including r.promptLine
     function renderRecords(records = []) {
       const box = document.getElementById("checkpointBox");
       if (!Array.isArray(records) || records.length === 0) {
@@ -218,7 +219,9 @@
           } | Vol=${r.volumeKShares ?? "-"} | Val=${r.valueMBaht ?? "-"} | SET50=${
             r.set50Index ?? "-"
           }`;
-          return `${base}\n${formatEnrichedDetails(r)}`;
+          const details = `${formatEnrichedDetails(r)}`;
+          const fullLine = r.promptLine ? `\n   Full: ${r.promptLine}` : "";
+          return `${base}\n${details}${fullLine}`;
         })
         .join("\n\n");
     }

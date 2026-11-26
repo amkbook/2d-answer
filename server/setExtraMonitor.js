@@ -5,6 +5,59 @@ const HEADERS = {
   "Accept-Language": "en-US,en;q=0.9,th;q=0.8"
 };
 
+const BLOCKED_SYMBOLS = new Set([
+  "SET",
+  "SET50",
+  "SET100",
+  "SET50FF",
+  "SET100FF",
+  "SETCLMV",
+  "SETHD",
+  "SETESG",
+  "SETWB",
+  "SETTRI",
+  "SSET",
+  "MAI",
+  "TFEX",
+  "VALUE",
+  "VOLUME",
+  "GAINERS",
+  "LOSERS",
+  "MORE",
+  "LAST",
+  "CHANGE",
+  "BAHT",
+  "SHARES",
+  "TYPE",
+  "BUY",
+  "SELL",
+  "NET",
+  "HIGH",
+  "LOW",
+  "OPEN",
+  "OPEN1",
+  "OPEN2",
+  "ICT",
+  "REMARK",
+  "INDEX",
+  "TOTAL",
+  "TRADING",
+  "SUMMARY",
+  "INSTITUTION",
+  "PROPRIETARY",
+  "FOREIGN",
+  "INDIVIDUAL"
+]);
+
+function isStockSymbol(sym) {
+  if (!sym) return false;
+  const s = String(sym).trim().toUpperCase();
+  if (!/^[A-Z]{2,8}[0-9]?$/.test(s)) return false;
+  if (BLOCKED_SYMBOLS.has(s)) return false;
+  if (s.startsWith("SET")) return false;
+  return true;
+}
+
 function cleanNum(text) {
   if (text === null || text === undefined) return null;
   const n = parseFloat(String(text).replace(/,/g, "").replace(/[^\d.-]/g, ""));
@@ -15,7 +68,7 @@ function stripHtmlToText(html = "") {
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<\/(tr|td|th|li|p|div|h1|h2|h3|h4|section|article|br)>/gi, " \n ")
+    .replace(/<\/(tr|td|th|li|p|div|span|a|button|h1|h2|h3|h4|section|article|br)>/gi, "\n")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
@@ -79,62 +132,19 @@ async function fetchSetOverviewDetails() {
   };
 }
 
-function parseTop5FromSection(sectionText) {
+function parseTop5StocksFromText(text) {
   const top5 = [];
-  const lines = sectionText
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
-
-  const ignoreSymbols = new Set([
-    "SET",
-    "SET50",
-    "SET100",
-    "SSET",
-    "MAI",
-    "TFEX",
-    "TOP",
-    "VALUE",
-    "VOLUME",
-    "GAINERS",
-    "LOSERS",
-    "MORE",
-    "LAST",
-    "CHANGE",
-    "BAHT",
-    "SHARES",
-    "TYPE",
-    "BUY",
-    "SELL",
-    "NET",
-    "TOTAL",
-    "TRADING",
-    "SUMMARY",
-    "OPEN2",
-    "ICT",
-    "NOV",
-    "DEC",
-    "JAN",
-    "FEB",
-    "MAR",
-    "APR",
-    "MAY",
-    "JUN",
-    "JUL",
-    "AUG",
-    "SEP",
-    "OCT"
-  ]);
-
-  const regex =
-    /\b([A-Z][A-Z0-9]{1,9})\b[\s\S]{0,80}?([\d,]+\.\d{2})\s+([+-]?[\d,]+\.\d{2})\s*\(\s*([+-]?[\d,.]+%)\s*\)/g;
-
   const seen = new Set();
-  for (const m of sectionText.matchAll(regex)) {
-    const symbol = m[1].toUpperCase();
-    if (ignoreSymbols.has(symbol) || seen.has(symbol)) continue;
+
+  const valueCardRegex =
+    /\b([A-Z]{2,8}[0-9]?)\b[\s\S]{0,120}?([\d,]+\.\d{2})[\s\S]{0,120}?Value\s*\('000\s*Baht\)[\s\S]{0,80}?([+-]?[\d,]+\.\d{2})\s*\(\s*([+-]?[\d,.]+%)\s*\)/gi;
+
+  for (const m of text.matchAll(valueCardRegex)) {
+    const symbol = String(m[1]).trim().toUpperCase();
+    if (!isStockSymbol(symbol) || seen.has(symbol)) continue;
 
     const price = cleanNum(m[2]);
+    const change = m[3];
     const pctStr = m[4].replace(/\s+/g, "");
     const pct = parseFloat(pctStr.replace("%", ""));
     if (price === null || !Number.isFinite(pct)) continue;
@@ -144,78 +154,15 @@ function parseTop5FromSection(sectionText) {
     top5.push({
       symbol,
       price,
-      change: m[3],
+      change,
       changePct: pctStr,
       dir
     });
 
-    if (top5.length >= 5) break;
+    if (top5.length >= 5) return top5;
   }
 
-  if (top5.length === 0) {
-    for (let i = 0; i < lines.length; i++) {
-      const symCandidate = lines[i].replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-      if (
-        /^[A-Z][A-Z0-9]{1,9}$/.test(symCandidate) &&
-        !ignoreSymbols.has(symCandidate) &&
-        !seen.has(symCandidate)
-      ) {
-        const windowStr = lines.slice(i, i + 6).join(" ");
-        const wm = windowStr.match(
-          /([\d,]+\.\d{2})\s+([+-]?[\d,]+\.\d{2})\s*\(\s*([+-]?[\d,.]+%)\s*\)/
-        );
-        if (wm) {
-          seen.add(symCandidate);
-          const pctStr = wm[3].replace(/\s+/g, "");
-          const pct = parseFloat(pctStr.replace("%", ""));
-          top5.push({
-            symbol: symCandidate,
-            price: cleanNum(wm[1]),
-            change: wm[2],
-            changePct: pctStr,
-            dir: pct > 0 ? "▲" : pct < 0 ? "▼" : "▬"
-          });
-          if (top5.length >= 5) break;
-        }
-      }
-    }
-  }
-
-  return top5;
-}
-
-function extractTop5FromHtml(html = "") {
-  // Check embedded JSON / script objects first
-  const jsonTop5 = [];
-  const objMatches = [
-    ...html.matchAll(
-      /"(?:symbol|securitySymbol|stockSymbol)"\s*:\s*"([A-Z][A-Z0-9]{1,9})"[\s\S]{0,180}?"(?:last|lastPrice|price)"\s*:\s*([\d.]+)[\s\S]{0,180}?"(?:percentChange|changePercent|pctChange)"\s*:\s*([+-]?[\d.]+)/gi
-    )
-  ];
-
-  const seen = new Set();
-  for (const m of objMatches) {
-    const symbol = String(m[1]).toUpperCase();
-    if (seen.has(symbol)) continue;
-    const price = cleanNum(m[2]);
-    const pctNum = parseFloat(m[3]);
-    if (price === null || !Number.isFinite(pctNum)) continue;
-    seen.add(symbol);
-    const pctStr = `${pctNum > 0 ? "+" : ""}${pctNum.toFixed(2)}%`;
-    const dir = pctNum > 0 ? "▲" : pctNum < 0 ? "▼" : "▬";
-    jsonTop5.push({
-      symbol,
-      price,
-      changePct: pctStr,
-      dir
-    });
-    if (jsonTop5.length >= 5) return jsonTop5;
-  }
-
-  const text = stripHtmlToText(html);
-  const top5Idx = text.search(/Top\s*5/i);
-  const slice = top5Idx >= 0 ? text.slice(top5Idx, top5Idx + 4000) : text;
-  return parseTop5FromSection(slice);
+  return [];
 }
 
 async function fetchFlowAndTop5() {
@@ -230,8 +177,9 @@ async function fetchFlowAndTop5() {
   const homeHtml = homeRes.status === "fulfilled" ? homeRes.value : "";
   const overviewHtml = overviewRes.status === "fulfilled" ? overviewRes.value : "";
 
-  const text = stripHtmlToText(homeHtml || overviewHtml);
-  const singleLine = text.replace(/\s+/g, " ");
+  const homeText = stripHtmlToText(homeHtml);
+  const fallbackText = stripHtmlToText(overviewHtml);
+  const singleLine = (homeText || fallbackText).replace(/\s+/g, " ");
 
   const investorTypes = ["Institution", "Proprietary", "Foreign", "Individual"];
   const netFlow = {};
@@ -250,15 +198,15 @@ async function fetchFlowAndTop5() {
       : { buy: null, sell: null, net: null };
   }
 
-  let top5 = extractTop5FromHtml(homeHtml);
-  if (top5.length === 0 && overviewHtml) {
-    top5 = extractTop5FromHtml(overviewHtml);
+  let top5 = parseTop5StocksFromText(homeText);
+  if (top5.length === 0 && fallbackText) {
+    top5 = parseTop5StocksFromText(fallbackText);
   }
 
   return { netFlow, top5 };
 }
 
-async function collectEnrichedCheckpoint(ictTimeLabel) {
+async function collectEnrichedCheckpoint(ictTimeLabel, coreSnap = null) {
   const [overviewRes, flowRes] = await Promise.allSettled([
     fetchSetOverviewDetails(),
     fetchFlowAndTop5()
@@ -286,13 +234,19 @@ async function collectEnrichedCheckpoint(ictTimeLabel) {
           .join(" | ")
       : "N/A";
 
+  const setVal = overview.setIndex ?? coreSnap?.setIndex ?? "N/A";
+  const setChg = overview.setChange ?? coreSnap?.indexChange ?? "N/A";
+  const setPct = overview.setChangePct ?? "N/A";
+  const volVal = coreSnap?.volumeKShares ?? "N/A";
+  const valBaht = coreSnap?.valueMBaht ?? "N/A";
+  const set50Val = overview.set50Index ?? coreSnap?.set50Index ?? "N/A";
+
   const promptLine = [
     `[${ictTimeLabel} ICT]`,
-    `SET: ${overview.setIndex ?? "N/A"} (${overview.setChange ?? "N/A"}, ${
-      overview.setChangePct ?? "N/A"
-    })`,
+    `SET: ${setVal} (${setChg}, ${setPct})`,
+    `Vol: ${volVal} | Val: ${valBaht}`,
     `High/Low: ${overview.high ?? "N/A"}/${overview.low ?? "N/A"}`,
-    `SET50: ${overview.set50Index ?? "N/A"}`,
+    `SET50: ${set50Val}`,
     `Net Flow (M.Baht): ${flowSummary}`,
     `Top 5 Value: ${top5Summary}`
   ].join(" | ");

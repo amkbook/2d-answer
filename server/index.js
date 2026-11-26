@@ -161,13 +161,14 @@ async function fetchSetSnapshot() {
   };
 }
 
-async function enrichWithExtraMonitor(checkpointTime) {
+// Updated: passes coreSnap into collectEnrichedCheckpoint
+async function enrichWithExtraMonitor(checkpointTime, coreSnap = null) {
   if (typeof extraMonitor?.collectEnrichedCheckpoint !== "function") {
     return null;
   }
   const cleanLabel = String(checkpointTime || "").replace(/\s*ICT$/i, "").trim();
   try {
-    return await extraMonitor.collectEnrichedCheckpoint(cleanLabel);
+    return await extraMonitor.collectEnrichedCheckpoint(cleanLabel, coreSnap);
   } catch (err) {
     console.warn(`[ExtraMonitor Collect Warning] ${cleanLabel}: ${err.message}`);
     return null;
@@ -241,10 +242,8 @@ async function run10MinAutoMonitor() {
   if (!TARGET_SLOTS.includes(ict.hmKey)) return;
 
   try {
-    const [snap, enriched] = await Promise.all([
-      fetchSetSnapshot(),
-      enrichWithExtraMonitor(ict.hmKey)
-    ]);
+    const snap = await fetchSetSnapshot();
+    const enriched = await enrichWithExtraMonitor(ict.hmKey, snap);
 
     if (
       snap.setIndex !== null &&
@@ -394,10 +393,8 @@ app.get("/api/checkpoints", (req, res) => {
 app.post("/api/checkpoints/fetch-now", async (req, res) => {
   try {
     const ict = getIctNow();
-    const [snap, enriched] = await Promise.all([
-      fetchSetSnapshot(),
-      enrichWithExtraMonitor(ict.hmKey)
-    ]);
+    const snap = await fetchSetSnapshot();
+    const enriched = await enrichWithExtraMonitor(ict.hmKey, snap);
 
     const { record, store } = saveCheckpointRecord({
       dateKey: ict.dateKey,
