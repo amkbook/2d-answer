@@ -162,7 +162,36 @@ function parseTop5StocksFromText(text) {
     if (top5.length >= 5) return top5;
   }
 
-  return [];
+  // Matches Top 10 Value table rows: "SYMBOL  Last  Change (Pct%)  AOM Value ('000 Baht)"
+  const top10Idx = text.search(/Top\s*10\s*Value/i);
+  const scope = top10Idx >= 0 ? text.slice(top10Idx, top10Idx + 5000) : text;
+  const rowRegex =
+    /\b([A-Z]{2,8}[0-9]?)\b\s+([\d,]+\.\d{2})\s+([+-]?[\d,]+\.\d{2})\s*\(\s*([+-]?[\d,.]+%)\s*\)\s+([\d,]+\.\d{2})/gi;
+
+  for (const m of scope.matchAll(rowRegex)) {
+    const symbol = String(m[1]).trim().toUpperCase();
+    if (!isStockSymbol(symbol) || seen.has(symbol)) continue;
+
+    const price = cleanNum(m[2]);
+    const change = m[3];
+    const pctStr = m[4].replace(/\s+/g, "");
+    const pct = parseFloat(pctStr.replace("%", ""));
+    if (price === null || !Number.isFinite(pct)) continue;
+
+    seen.add(symbol);
+    const dir = pct > 0 ? "▲" : pct < 0 ? "▼" : "▬";
+    top5.push({
+      symbol,
+      price,
+      change,
+      changePct: pctStr,
+      dir
+    });
+
+    if (top5.length >= 5) return top5;
+  }
+
+  return top5;
 }
 
 async function fetchFlowAndTop5() {
